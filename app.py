@@ -4,7 +4,7 @@ from flask_cors import CORS
 from scipy.io import loadmat
 from scipy.signal import resample
 from ecgdetectors import Detectors
-
+import requests
 # --- 初始化与常量定义 ---
 app = Flask(__name__)
 # 允许来自任何源的跨域请求，方便前端调试
@@ -91,6 +91,41 @@ def analyze_ecg():
     except Exception as e:
         print(f"处理文件时出错: {e}")
         return jsonify({"error": f"处理文件时出现未知错误: {str(e)}"}), 500
+
+# 2. 【新增】聊天请求代理端点
+@app.route('/chat', methods=['POST'])
+def chat_proxy():
+    # 从请求中获取前端发来的聊天历史和上下文数据
+    data = request.get_json()
+    messages = data.get('messages')
+    
+    # 从服务器的环境变量中安全地获取API Key
+    api_key = os.environ.get('DEEPSEEK_API_KEY')
+    if not api_key:
+        return jsonify({"error": "服务器未配置API Key"}), 500
+
+    # 构造请求体，发往DeepSeek API
+    deepseek_payload = {
+        "model": "deepseek-chat",
+        "messages": messages
+    }
+    
+    headers = {
+        'Content-Type': 'application/json',
+        'Authorization': f'Bearer {api_key}'
+    }
+
+    try:
+        # 由后端服务器发起对DeepSeek的请求
+        response = requests.post('https://api.deepseek.com/chat/completions', headers=headers, json=deepseek_payload)
+        response.raise_for_status() # 如果请求失败（非2xx状态码），则会抛出异常
+        
+        # 将DeepSeek的响应直接返回给前端
+        return jsonify(response.json())
+        
+    except requests.exceptions.RequestException as e:
+        return jsonify({"error": f"调用DeepSeek API失败: {e}"}), 500
+
 
 # 启动服务器
 if __name__ == '__main__':
