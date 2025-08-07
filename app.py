@@ -82,7 +82,7 @@ def analyze_ecg():
         full_api_data = response_data_from_api.get('data', {})
         
         # 3. 调用DeepSeek API生成文本报告
-        text_report = generate_report_from_data(full_api_data)
+        # text_report = generate_report_from_data(full_api_data)
 
         # 4. 提取用于仪表盘的6个核心指标
         health_index = full_api_data.get('HealthIndex', {})
@@ -106,7 +106,7 @@ def analyze_ecg():
         response_to_frontend = {
             'waveform': playback_waveform.tolist(),
             'initialAnalysis': {k: (float(v) if v is not None and not np.isnan(v) else None) for k, v in dashboard_metrics.items()},
-            'textReport': text_report,
+            
             'fullAnalysis': full_api_data # 【新增】将完整数据也发给前端，用于后续聊天
         }
         
@@ -115,6 +115,20 @@ def analyze_ecg():
     except Exception as e:
         print(f"处理文件时出错: {e}")
         return jsonify({"error": f"处理文件时出现未知错误: {str(e)}"}), 500
+
+
+# --- 【新增】/generate-report 端点，专门负责耗时的AI报告 ---
+@app.route('/generate-report', methods=['POST'])
+def generate_report_endpoint():
+    # 从请求中获取由前端传回的、HeartVoice分析好的完整数据
+    full_api_data = request.get_json().get('fullAnalysis')
+    if not full_api_data:
+        return jsonify({"error": "缺少分析数据"}), 400
+
+    # 调用我们之前的报告生成逻辑
+    report_text = generate_report_from_data(full_api_data)
+    
+    return jsonify({"textReport": report_text})
 
 # --- 聊天代理端点 ---
 @app.route('/chat', methods=['POST'])
