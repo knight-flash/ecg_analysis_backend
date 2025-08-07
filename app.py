@@ -1,133 +1,145 @@
 import os
+import requests
 import numpy as np
+import pprint
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from scipy.io import loadmat
 from scipy.signal import resample
-from ecgdetectors import Detectors
-import requests
-# --- 初始化与常量定义 ---
+from dotenv import load_dotenv
+
+# --- 初始化与加载环境变量 ---
+load_dotenv()
 app = Flask(__name__)
-# 允许来自任何源的跨域请求，方便前端调试
 CORS(app)
 
-ORIGINAL_SAMPLING_RATE = 300  # 从您的Notebook确认
-TARGET_SAMPLING_RATE = 100    # 您指定的前端播放频率
-PLAYBACK_DURATION_S = 300     # 我们为前端生成一个5分钟(300秒)的循环播放数据
+# --- 从环境变量中读取所有外部配置，更安全、更灵活 ---
+HEARTVOICE_API_URL = os.environ.get('HEARTVOICE_API_URL', "http://183.162.233.24:10081/HeartVoice")
+DEEPSEEK_API_URL = os.environ.get('DEEPSEEK_API_URL', "https://api.deepseek.com/chat/completions")
+DEEPSEEK_API_KEY = os.environ.get('DEEPSEEK_API_KEY')
 
+# --- 常量定义 ---
+ORIGINAL_SAMPLING_RATE = 300
+TARGET_SAMPLING_RATE = 100
+PLAYBACK_DURATION_S = 300
+
+# --- AI报告生成辅助函数 ---
+def generate_report_from_data(api_data):
+    """根据HeartVoice返回的详细数据，调用DeepSeek API生成一份总结报告。"""
+    if not DEEPSEEK_API_KEY:
+        return "报告生成失败：服务器未配置DeepSeek API Key。"
+
+    prompt = "你是一名专业的心脏健康数据分析师HeartTalk。请根据以下提供的心电图（ECG）详细分析数据，为用户生成一份专业、简洁且通俗易懂的健康总结报告。报告应分点阐述，并给出一个总体的健康建议。请使用Markdown格式化你的回答。\n\n--- 分析数据摘要 ---\n"
+    
+    for key, value in api_data.items():
+        if isinstance(value, dict):
+            prompt += f"\n**{key}**:\n"
+            for sub_key, sub_value in value.items():
+                prompt += f"- {sub_key}: {sub_value}\n"
+    prompt += "\n请基于以上完整数据开始生成报告："
+
+    try:
+        response = requests.post(
+            DEEPSEEK_API_URL,
+            headers={'Authorization': f'Bearer {DEEPSEEK_API_KEY}', 'Content-Type': 'application/json'},
+            json={
+                "model": "deepseek-chat",
+                "messages": [{"role": "user", "content": prompt}]
+            }
+        )
+        response.raise_for_status()
+        report_data = response.json()
+        return report_data['choices'][0]['message']['content']
+    except Exception as e:
+        print(f"调用DeepSeek生成报告时出错: {e}")
+        return f"调用AI生成报告时出错: {e}"
+
+# --- 主分析端点 ---
 @app.route('/analyze', methods=['POST'])
 def analyze_ecg():
-    """
-    接收 .mat 文件, 进行预处理(重采样、归一化)、初次分析, 并返回结果。
-    """
-    # 检查文件是否存在于请求中
     if 'file' not in request.files:
         return jsonify({"error": "未找到文件部分"}), 400
-
     file = request.files['file']
-
     if file.filename == '':
         return jsonify({"error": "未选择文件"}), 400
 
     try:
-        # --- 1. 读取 .mat 文件 ---
+        # 1. 读取和预处理信号
         mat_data = loadmat(file.stream)
         raw_signal = mat_data['val'].flatten()
-
-        # --- 2. 信号预处理：升降采样 ---
         num_samples_resampled = int(len(raw_signal) * TARGET_SAMPLING_RATE / ORIGINAL_SAMPLING_RATE)
         resampled_signal = resample(raw_signal, num_samples_resampled)
         
-        # --- 2.1. 【新增】归一化处理 ---
-        # 根据您提供的公式 (Z-score 标准化)
-        def normalize_signal(signal):
-            mean_val = np.mean(signal)
-            std_val = np.std(signal)
-            # 添加 1e-8 防止标准差为0时除零错误
-            return (signal - mean_val) / (std_val + 1e-8)
-
-        normalized_signal = normalize_signal(resampled_signal)
-        print("信号已完成归一化处理。")
-
-        # --- 3. 初次全局分析 (在归一化后的信号上进行) ---
-        detectors = Detectors(TARGET_SAMPLING_RATE)
-        r_peaks = detectors.pan_tompkins_detector(normalized_signal)
-
-        analysis_results = {}
-        if len(r_peaks) > 1:
-            rr_intervals = np.diff(r_peaks) / TARGET_SAMPLING_RATE
-            mean_heart_rate = 60 / np.mean(rr_intervals)
-            hrv_rmssd = np.sqrt(np.mean(np.diff(rr_intervals) ** 2))
-            analysis_results = {
-                'Heart_Rate_Mean': mean_heart_rate,
-                'HRV_RMSSD': hrv_rmssd,
-                'Num_R_Peaks': len(r_peaks)
-            }
+        # 2. 调用 HeartVoice API 获取详细分析
+        api_payload = {'ecgData': resampled_signal.tolist(), 'ecgSampleRate': TARGET_SAMPLING_RATE, 'method': 'FeatureDB'}
+        response = requests.post(url=HEARTVOICE_API_URL, headers={'Content-Type': 'application/json'}, json=api_payload)
+        response.raise_for_status()
+        response_data_from_api = response.json()
         
-        # --- 4. 为前端生成可循环播放的波形数据 (使用归一化后的信号) ---
-        target_length = TARGET_SAMPLING_RATE * PLAYBACK_DURATION_S
+        if response_data_from_api.get('code') != 200:
+            raise Exception(f"HeartVoice API返回错误: {response_data_from_api.get('msg')}")
         
-        if len(normalized_signal) >= target_length:
-            playback_waveform = normalized_signal[:target_length]
-        else:
-            repeat_times = target_length // len(normalized_signal)
-            remainder = target_length % len(normalized_signal)
-            playback_waveform = np.concatenate(
-                (np.tile(normalized_signal, repeat_times), normalized_signal[:remainder])
-            )
+        full_api_data = response_data_from_api.get('data', {})
         
-        print(f"全局分析完成: {analysis_results}")
-        print(f"已生成 {PLAYBACK_DURATION_S} 秒，共 {len(playback_waveform)} 点的播放波形。")
+        # 3. 调用DeepSeek API生成文本报告
+        text_report = generate_report_from_data(full_api_data)
 
-        # --- 5. 构建并返回最终的JSON响应 ---
-        response_data = {
-            'waveform': playback_waveform.tolist(),
-            'initialAnalysis': {k: (float(v) if v is not None and not np.isnan(v) else None) for k, v in analysis_results.items()}
+        # 4. 提取用于仪表盘的6个核心指标
+        health_index = full_api_data.get('HealthIndex', {})
+        dashboard_metrics = {
+            'HR': full_api_data.get('Features', {}).get('HR'),
+            'Pressure': health_index.get('Pressure'),
+            'HRV': health_index.get('HRV'),
+            'Emotion': health_index.get('Emotion'),
+            'Fatigue': health_index.get('Fatigue'),
+            'Vitality': health_index.get('Vitality')
         }
         
-        return jsonify(response_data)
+        # 5. 归一化并生成播放波形
+        def normalize_signal(signal):
+            return (signal - np.mean(signal)) / (np.std(signal) + 1e-8)
+        normalized_signal = normalize_signal(resampled_signal)
+        target_length = TARGET_SAMPLING_RATE * PLAYBACK_DURATION_S
+        playback_waveform = np.concatenate((np.tile(normalized_signal, target_length // len(normalized_signal)), normalized_signal[:target_length % len(normalized_signal)])) if len(normalized_signal) < target_length else normalized_signal[:target_length]
 
-    except KeyError:
-        return jsonify({"error": "处理失败：.mat文件中未找到名为 'val' 的变量。请检查文件内容。"}), 400
+        # 6. 构建并返回给前端的最终JSON
+        response_to_frontend = {
+            'waveform': playback_waveform.tolist(),
+            'initialAnalysis': {k: (float(v) if v is not None and not np.isnan(v) else None) for k, v in dashboard_metrics.items()},
+            'textReport': text_report,
+            'fullAnalysis': full_api_data # 【新增】将完整数据也发给前端，用于后续聊天
+        }
+        
+        return jsonify(response_to_frontend)
+
     except Exception as e:
         print(f"处理文件时出错: {e}")
         return jsonify({"error": f"处理文件时出现未知错误: {str(e)}"}), 500
 
-# 2. 【新增】聊天请求代理端点
+# --- 聊天代理端点 ---
 @app.route('/chat', methods=['POST'])
 def chat_proxy():
-    # 从请求中获取前端发来的聊天历史和上下文数据
     data = request.get_json()
     messages = data.get('messages')
     
-    # 从服务器的环境变量中安全地获取API Key
-    api_key = os.environ.get('DEEPSEEK_API_KEY')
-    if not api_key:
+    if not DEEPSEEK_API_KEY:
         return jsonify({"error": "服务器未配置API Key"}), 500
 
-    # 构造请求体，发往DeepSeek API
-    deepseek_payload = {
-        "model": "deepseek-chat",
-        "messages": messages
-    }
+    deepseek_payload = {"model": "deepseek-chat", "messages": messages}
     
-    headers = {
-        'Content-Type': 'application/json',
-        'Authorization': f'Bearer {api_key}'
-    }
+    print("--- Sending to DeepSeek API (Chat) ---")
+    pprint.pprint(deepseek_payload)
+    print("------------------------------------")
+
+    headers = {'Authorization': f'Bearer {DEEPSEEK_API_KEY}', 'Content-Type': 'application/json'}
 
     try:
-        # 由后端服务器发起对DeepSeek的请求
-        response = requests.post('https://api.deepseek.com/chat/completions', headers=headers, json=deepseek_payload)
-        response.raise_for_status() # 如果请求失败（非2xx状态码），则会抛出异常
-        
-        # 将DeepSeek的响应直接返回给前端
+        response = requests.post(DEEPSEEK_API_URL, headers=headers, json=deepseek_payload)
+        response.raise_for_status()
         return jsonify(response.json())
-        
     except requests.exceptions.RequestException as e:
         return jsonify({"error": f"调用DeepSeek API失败: {e}"}), 500
 
-
-# 启动服务器
+# --- 启动服务器 ---
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5001, debug=True)
