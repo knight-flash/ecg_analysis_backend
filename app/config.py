@@ -14,9 +14,12 @@ HEARTVOICE_API_URL = os.environ.get('HEARTVOICE_API_URL', "http://183.162.233.24
 # 智谱AI GLM模型配置
 ZHIPU_API_TOKEN = os.environ.get('ZHIPU_API_TOKEN') 
 GLM_API_URL = os.environ.get('GLM_API_URL', "https://open.bigmodel.cn/api/paas/v4/chat/completions")
-GLM_MODEL_NAME = os.environ.get('GLM_MODEL_NAME', "glm-4")
+GLM_MODEL_NAME = os.environ.get('GLM_MODEL_NAME', "glm-4.5")
 
 # --- 应用常量 ---
 ORIGINAL_SAMPLING_RATE = 300
 TARGET_SAMPLING_RATE = 100
 PLAYBACK_DURATION_S = 300
+
+GLM_RPM_LIMIT = 3  # RPM: Requests Per Minute
+GLM_TIME_WINDOW_SECONDS = 60 # 时间窗口（秒）

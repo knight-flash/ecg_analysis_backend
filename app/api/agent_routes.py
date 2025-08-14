@@ -5,86 +5,84 @@ from app.state import SESSIONS
 import json
 from app.config import ZHIPU_API_TOKEN, GLM_API_URL, GLM_MODEL_NAME
 import requests
-
+from app.toolkit.knowledge import get_knowledge_for_prompt
 agent_bp = Blueprint('agent', __name__)
+
 
 @agent_bp.route('/agent', methods=['POST'])
 def agent_endpoint():
-    """【修改】智能代理核心端点，功能已扩展。"""
     data = request.get_json()
     session_id, user_prompt = data.get('session_id'), data.get('prompt')
 
     if not all([session_id, user_prompt]): return jsonify({"error": "请求中缺少 session_id 或 prompt"}), 400
     if session_id not in SESSIONS: return jsonify({"error": "无效的 session_id"}), 400
-    if not ZHIPU_API_TOKEN: return jsonify({"error": "服务器未配置ZHIPU_API_TOKEN"}), 500
-
-    # 【修改】扩展了工具清单
+    session = SESSIONS.get(session_id)
+    if session['status'] != 'ready':
+        return jsonify({
+            "error": "报告仍在生成中，请稍等片刻后再进行问答。",
+            "status": session['status']
+        }), 422 # 422 Unprocessable Entity, 表示请求格式正确但服务器无法处理
+    # 【修改】将工具定义回归到简单版本
     tools_schema = [
-        # ... 原有的 tool_get_full_analysis_report schema ...
-        {
-            "type": "function",
-            "function": {
-                "name": "tool_get_full_analysis_report",
-                "description": "当用户明确表示想要一份完整、详细的文本格式健康分析报告时，调用此工具。",
-                
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "tool_get_full_analysis_report",
-                "description": "当用户想要一份完整、详细的文本格式健康分析报告时，调用此工具。",
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "tool_reset_session",
-                "description": "当用户想要清除、重置所有数据，或开始一次全新分析时调用此工具。",
-            }
-        },
+        {"type": "function", "function": {"name": "tool_get_full_analysis_report", "description": "当用户想要一份完整、详细的文本格式健康分析报告时调用。"}},
+        {"type": "function", "function": {"name": "tool_reset_session", "description": "当用户想要清除数据并重新开始时调用。"}},
         {
             "type": "function",
             "function": {
                 "name": "tool_get_specific_metric",
-                "description": "当用户用口语化、模糊的语言询问其健康状态或具体指标时，调用此工具。例如'我心脏跳得稳不稳？'或'我最近是不是压力很大？'或'查下心率'。",
+                "description": "在理解用户问题后，用于查询单个标准化健康指标的数值。",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "user_query": {
+                        "metric_name": {
                             "type": "string",
-                            "description": "用户的原始、完整的提问内容，例如'我心脏的节律怎么样？'。"
+                            "description": "从下面的知识库中选择的最匹配用户问题的、标准化的指标键名，例如 'HR', 'HRV'。"
                         }
                     },
-                    "required": ["user_query"]
+                    "required": ["metric_name"]
                 }
             }
         }
     ]
 
-    messages = [{"role": "user", "content": user_prompt}]
-    
-    print(f"--- Sending to GLM Agent for session {session_id} ---")
-    
-    try:
+    # 【修改】构建包含知识库的、更强大的System Prompt
+    knowledge_str = get_knowledge_for_prompt()
+    system_prompt = (
+        "你是一个顶级的健康数据分析助手。你的任务是：\n"
+        "1. 理解用户的自然语言提问。\n"
+        "2. 参考下面提供的“可用指标知识库”，分析出用户问题涉及到哪些具体的指标。\n"
+        "3. 决定是否需要以及如何调用一个或多个工具来回答问题。\n"
+        "4. 如果一个模糊问题（如“心脏稳定吗”）关联到多个指标，你应该为每个相关指标都发起一次独立的工具调用。\n\n"
+        f"--- 可用指标知识库 ---\n{knowledge_str}\n"
+        "--- End of Knowledge Base ---"
+    )
 
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt}
+    ]
+
+    try:
+        # 【修改】这现在是整个流程中唯一的一次对大模型的调用
         glm_response = get_glm_response(messages=messages, tools=tools_schema)
         choice = glm_response['choices'][0]
-        
+
         if choice['finish_reason'] == 'tool_calls':
-            # 情况A: 模型决定调用工具
-            tool_call = choice['message']['tool_calls'][0]
-            tool_name = tool_call['function']['name']
+            # 模型决定调用一个或多个工具
+            tool_calls = choice['message']['tool_calls']
+            tool_results = []
             
-            if tool_name in AVAILABLE_TOOLS:
-                tool_function = AVAILABLE_TOOLS[tool_name]
-                # 【修改】解析工具参数
-                arguments = json.loads(tool_call['function']['arguments'])
-                # 使用kwargs传递参数
-                tool_result = tool_function(session_id=session_id, **arguments)
-                return jsonify({"response": tool_result, "type": "tool_result"})
-            else:
-                return jsonify({"error": f"模型意图调用一个未知的工具: {tool_name}"}), 500
+            # 【修改】循环处理可能存在的多个工具调用
+            for tool_call in tool_calls:
+                tool_name = tool_call['function']['name']
+                if tool_name in AVAILABLE_TOOLS:
+                    arguments = json.loads(tool_call['function']['arguments'])
+                    result = AVAILABLE_TOOLS[tool_name](session_id=session_id, **arguments)
+                    tool_results.append(result)
+            
+            # 汇总所有工具的结果并返回
+            final_response = "根据您的提问，查询到以下信息：\n" + "\n".join(tool_results)
+            return jsonify({"response": final_response, "type": "tool_result"})
         
         else:
             # 【修改】情况B: 上下文感知闲聊

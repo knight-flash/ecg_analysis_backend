@@ -58,69 +58,33 @@ def tool_reset_session(session_id: str) -> str:
         return "会话已成功重置。您可以上传新文件开始新的分析了。"
     return "操作失败：未找到需要重置的会话。"
 
-def tool_get_specific_metric(session_id: str, user_query: str) -> str:
+def tool_get_specific_metric(session_id: str, metric_name: str) -> str:
     """
-    智能查询工具：接收用户的模糊问题，理解并映射到具体指标，然后查询并返回结果。
+    简单查询工具：接收一个标准化的指标名称，查询并返回其值。
     """
-    print(f"--- [Smart Tool Executing] for session: {session_id} with query: '{user_query}' ---")
+    print(f"--- [Simple Tool Executing] for session: {session_id} with precise metric: '{metric_name}' ---")
     
-    # --- 内部步骤1: 理解与映射 ---
-    knowledge_prompt = get_knowledge_for_prompt()
-    mapping_prompt = (
-        "你是一个医疗数据映射专家。请根据用户的提问和下面提供的“可用指标知识库”，分析出用户最可能关心的指标是哪一个或哪几个。\n"
-        "你的任务是：只返回一个包含相关指标键名（key）的JSON数组。例如 [\"HRV\", \"HR\"]。\n"
-        "如果找不到任何相关指标，请返回一个空数组 []。\n\n"
-        f"【用户提问】:\n{user_query}\n\n"
-        f"【可用指标知识库】:\n{knowledge_prompt}\n\n"
-        "请返回JSON数组:"
-    )
-    
-    try:
-        print("--- Calling LLM for metric mapping... ---")
-        mapping_response = get_glm_response(messages=[{"role": "user", "content": mapping_prompt}])
-        # 假设模型返回的 content 就是 JSON 字符串 "[\"HRV\", \"HR\"]"
-        content_str = mapping_response['choices'][0]['message']['content']
-        metric_keys_to_find = json.loads(content_str)
-        
-        if not isinstance(metric_keys_to_find, list) or not metric_keys_to_find:
-            return "抱歉，根据您的描述，我未能确定您想查询的具体健康指标。您可以换个方式问问看？"
-            
-        print(f"--- LLM mapped query to keys: {metric_keys_to_find} ---")
-
-    except Exception as e:
-        print(f"LLM映射指标时出错: {e}")
-        return "在理解您想查询的指标时遇到了点麻烦，请稍后再试。"
-
-    # --- 内部步骤2: 查询并汇总数据 ---
     session_data = SESSIONS.get(session_id)
     if not session_data or 'full_analysis' not in session_data:
-        return "工具执行失败：未找到分析数据。"
+        return f"查询失败（{metric_name}）：未找到分析数据。"
     
     full_data = session_data['full_analysis']
-    flat_kb = get_flat_knowledge_base()
+    flat_kb = get_flat_knowledge_base() # 从 knowledge.py 导入
     
-    results = []
-    for key in metric_keys_to_find:
-        key_upper = key.upper()
-        # 在所有可能的子字典中查找
-        value = full_data.get('ECGFeatures', {}).get(key_upper) or \
-                full_data.get('PPGFeatures', {}).get(key_upper) or \
-                full_data.get('HRVIndex', {}).get(key_upper) or \
-                full_data.get('HealthIndex', {}).get(key_upper)
-
-        if value is not None:
-            metric_info = flat_kb.get(key, {})
-            name_cn = metric_info.get("name_cn", key)
-            results.append(f"- {name_cn} ({key}): **{value}**")
-        else:
-            results.append(f"- 未能在您的数据中找到指标 {key} 的值。")
-            
-    if not results:
-        return "抱歉，虽然我理解了您想查询的指标，但在您的本次分析数据中并未找到它们。"
-
-    final_response = f"根据您关于“{user_query}”的提问，我为您查询了以下最相关的指标：\n" + "\n".join(results)
+    key_to_find = metric_name.upper()
     
-    return final_response
+    # 在所有可能的子字典中查找
+    value = full_data.get('ECGFeatures', {}).get(key_to_find) or \
+            full_data.get('PPGFeatures', {}).get(key_to_find) or \
+            full_data.get('HRVIndex', {}).get(key_to_find) or \
+            full_data.get('HealthIndex', {}).get(key_to_find)
+
+    if value is not None:
+        metric_info = flat_kb.get(key_to_find, {})
+        name_cn = metric_info.get("name_cn", key_to_find)
+        return f"- {name_cn} ({key_to_find}): **{value}**"
+    else:
+        return f"- 未能在您的数据中找到指标 {key_to_find} 的值。"
 
 # ... 如果有更多tool函数，都放在这里
 
