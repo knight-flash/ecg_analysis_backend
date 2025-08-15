@@ -74,8 +74,7 @@ def tool_get_specific_metric(session_id: str, metric_name: str) -> str:
     key_to_find = metric_name.upper()
     
     # 在所有可能的子字典中查找
-    value = full_data.get('ECGFeatures', {}).get(key_to_find) or \
-            full_data.get('PPGFeatures', {}).get(key_to_find) or \
+    value = full_data.get('Features', {}).get(key_to_find) or \
             full_data.get('HRVIndex', {}).get(key_to_find) or \
             full_data.get('HealthIndex', {}).get(key_to_find)
 

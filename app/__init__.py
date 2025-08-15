@@ -1,4 +1,5 @@
 from flask import Flask
+from flask_cors import CORS # 1. 导入CORS
 # 注册蓝图
 from .api.analysis_routes import analysis_bp
 from .api.agent_routes import agent_bp
@@ -10,7 +11,7 @@ def create_app():
     app.config.from_object('app.config')
     
     
-    
+    CORS(app) 
     app.register_blueprint(analysis_bp)
     app.register_blueprint(agent_bp)
     

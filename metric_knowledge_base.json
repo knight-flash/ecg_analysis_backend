@@ -1,5 +1,5 @@
 {
-  "ECGFeatures": {
+  "Features": {
     "category_name": "ECG波形特征",
     "metrics": {
       "HR": { "name_cn": "心率", "description": "每分钟心脏跳动的次数。" },
@@ -16,26 +16,6 @@
       "ST_form": { "name_cn": "ST段形态", "description": "ST段的形状，可能为抬高(upslope)、压低(declination)或水平(horizontal)。" },
       "QT_interval": { "name_cn": "QT间期", "description": "从QRS波群开始到T波结束的时间，代表心室的电活动总时间。" },
       "QTc": { "name_cn": "校正的QT间期", "description": "根据心率校正后的QT间期，能更准确地评估心室复极情况。" }
-    }
-  },
-  "PPGFeatures": {
-    "category_name": "PPG波形特征",
-    "metrics": {
-      "ct": { "name_cn": "高峰时间", "description": "脉搏波从起始点到收缩期峰值点的时间。" },
-      "pi": { "name_cn": "灌注指数", "description": "反映测量部位的脉动血流与非脉动血流的比值。" },
-      "delta_t": { "name_cn": "Delta-T", "description": "收缩期峰点到舒张期峰点的时间间隔。" },
-      "agi": { "name_cn": "衰老指数", "description": "评估血管年龄和弹性的指标。" },
-      "pai": { "name_cn": "外周增强指数", "description": "评估外周血管阻力的指标。" },
-      "lasi": { "name_cn": "大动脉僵硬指数", "description": "反映大动脉的僵硬程度。" },
-      "pduring": { "name_cn": "心动周期", "description": "一次完整心跳的持续时间。" },
-      "sa": { "name_cn": "收缩幅值", "description": "脉搏波收缩期的振幅。" },
-      "pulse_area": { "name_cn": "脉动总面积", "description": "单个心动周期内脉搏波形与基线围成的总面积。" },
-      "dic_on_area": { "name_cn": "收缩期脉冲面积", "description": "单个心动周期内收缩期的脉冲面积。" },
-      "off_dic_area": { "name_cn": "舒张期脉冲面积", "description": "单个心动周期内舒张期的脉冲面积。" },
-      "ppi": { "name_cn": "脉搏间期", "description": "连续两次脉搏波峰值之间的时间间隔。" },
-      "ppi_ons": { "name_cn": "相邻脉冲起始点间期", "description": "连续两次脉搏波起始点之间的时间间隔。" },
-      "ppi_dv1": { "name_cn": "相邻脉冲最大导数间期", "description": "连续两次脉搏波最大导数点之间的时间间隔。" },
-      "pluse_width_percent": { "name_cn": "脉冲宽度百分比", "description": "脉搏波在特定高度上的宽度占心动周期的百分比。" }
     }
   },
   "HRVIndex": {

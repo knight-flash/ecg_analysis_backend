@@ -63,26 +63,46 @@ def agent_endpoint():
     ]
 
     try:
-        # 【修改】这现在是整个流程中唯一的一次对大模型的调用
         glm_response = get_glm_response(messages=messages, tools=tools_schema)
         choice = glm_response['choices'][0]
 
         if choice['finish_reason'] == 'tool_calls':
-            # 模型决定调用一个或多个工具
             tool_calls = choice['message']['tool_calls']
-            tool_results = []
             
-            # 【修改】循环处理可能存在的多个工具调用
+            # --- 【新增】优化逻辑开始 ---
+            
+            # 1. 收集所有需要查询的指标名称，并自动去重
+            metrics_to_query = set()
             for tool_call in tool_calls:
-                tool_name = tool_call['function']['name']
-                if tool_name in AVAILABLE_TOOLS:
+                if tool_call['function']['name'] == 'tool_get_specific_metric':
                     arguments = json.loads(tool_call['function']['arguments'])
-                    result = AVAILABLE_TOOLS[tool_name](session_id=session_id, **arguments)
-                    tool_results.append(result)
+                    metric_name = arguments.get('metric_name')
+                    if metric_name:
+                        metrics_to_query.add(metric_name)
+
+            # 2. 如果识别出需要查询的指标，则统一调用一次查询逻辑
+            if metrics_to_query:
+                # 调用一个辅助函数来批量获取结果 (或者直接在此处实现)
+                # 这里我们直接实现
+                session_id = request.get_json().get('session_id')
+                results = []
+                for metric_name in sorted(list(metrics_to_query)): # 排序使输出稳定
+                    # 直接调用工具函数，因为它已经包含了查询单项指标的逻辑
+                    result_str = AVAILABLE_TOOLS['tool_get_specific_metric'](
+                        session_id=session_id, 
+                        metric_name=metric_name
+                    )
+                    results.append(result_str)
+                
+                final_response = f"根据您的提问，查询到以下最相关的指标信息：\n" + "\n".join(results)
+                return jsonify({"response": final_response, "type": "tool_result"})
+
+            # (可选) 处理其他类型的工具调用，例如报告生成
+            elif tool_calls[0]['function']['name'] == 'tool_get_full_analysis_report':
+                 result = AVAILABLE_TOOLS['tool_get_full_analysis_report'](session_id=session_id)
+                 return jsonify({"response": result, "type": "tool_result"})
             
-            # 汇总所有工具的结果并返回
-            final_response = "根据您的提问，查询到以下信息：\n" + "\n".join(tool_results)
-            return jsonify({"response": final_response, "type": "tool_result"})
+            # --- 优化逻辑结束 ---
         
         else:
             # 【修改】情况B: 上下文感知闲聊
